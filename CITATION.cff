@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: "Merrikhi"
+    given-names: "Pegah"
+    email: "pegah.merrikhiii@gmail.com"
+    orcid: "https://orcid.org/YOUR_ORCID_ID" # اگر شناسه ORCID دارید اینجا وارد کنید
+title: "DIINA Framework: Dynamic Inhibitory Neural Architecture for Multilingual Processing"
+version: "1.0.0"
+doi: "10.5281/zenodo.20612090"
+date-released: 2024-10-11
+url: "https://github.com/Pegi1727/DIINA-"
+repository-code: "https://github.com/Pegi1727/DIINA-"
+keywords:
+  - "neural-architectures"
+  - "selective-state-space"
+  - "inhibitory-gating"
+  - "multilingual-nlp"
+  - "low-resource-languages"
+  - "DIINA"
+license: "MIT"
+abstract: >
+  The DIINA (Dynamic Inhibitory Neural Architecture) framework represents
+  a novel approach to multilingual processing by integrating dual-path 
+  (Fast Conv1D and Slow SSM/Attention) neural architectures with a 
+  Linguistic Inhibition Gate (LIG). This repository provides the 
+  core implementation, reproducibility telemetry, and benchmark 
+  evaluation suite.
