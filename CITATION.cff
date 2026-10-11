@@ -4,7 +4,7 @@ authors:
   - family-names: "Merrikhi"
     given-names: "Pegah"
     email: "pegah.merrikhiii@gmail.com"
-    orcid: "https://orcid.org/YOUR_ORCID_ID" # اگر شناسه ORCID دارید اینجا وارد کنید
+    orcid: "https://orcid.org/0009-0000-6235-3010"
 title: "DIINA Framework: Dynamic Inhibitory Neural Architecture for Multilingual Processing"
 version: "1.0.0"
 doi: "10.5281/zenodo.20612090"
