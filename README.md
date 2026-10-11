@@ -58,8 +58,14 @@ Relative FLOPs and inference latency profiles against standard baselines.
 
 ![Figure 7: Compute Cost](figures/figure_07_compute_cost.png)
 
----
-
+---------------------
+<p align="center">
+  <img src="figures/figure_08_source_missing.png" alt="DIINA Gating Entropy Diagnostics" width="850"/>
+</p>
+<p align="center">
+  <em><b>Figure: Gating Entropy Diagnostics & Dynamic Routing Stability</b> (1,500 steps across 5 seeds, confirming absence of routing collapse).</em>
+</p>
+---------------------
 ### Figure 9: Loss Convergence Comparison
 Cross-entropy loss convergence trajectories over 10 training epochs.
 
