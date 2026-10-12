@@ -1,0 +1,3 @@
+Model,Test Accuracy,Training Time (s),Final Loss
+Transformer,91.57%,15.04,0.0006
+DIINA,100.00%,3.22,0.0000
