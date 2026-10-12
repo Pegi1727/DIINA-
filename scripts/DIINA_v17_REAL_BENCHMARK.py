@@ -1,451 +1,256 @@
-# ============================================================
-# DIINA v17 REAL EXPERIMENTAL BENCHMARK
-# Transformer vs DIINA on SCAN-Like Sequence Task
-# ============================================================
-
+import os
+import random
+import time
+import matplotlib.pyplot as plt
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import random
-import time
-import pandas as pd
-import matplotlib.pyplot as plt
 
-
-# -----------------------------
-# Seed
-# -----------------------------
-
+# Reproducibility Setup
 torch.manual_seed(42)
 random.seed(42)
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"[*] Running on device: {device}")
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# -------------------------------------------------------------
+# 1. Dataset Generation: SCAN-Lite
+# -------------------------------------------------------------
+COMMANDS = ["walk", "run", "jump", "look", "turn"]
+ACTIONS = ["WALK", "RUN", "JUMP", "LOOK", "TURN"]
+MODIFIERS = ["twice", "thrice"]
 
+VOCAB = ["<pad>", "<sos>", "<eos>"] + COMMANDS + MODIFIERS + ACTIONS
+w2i = {w: i for i, w in enumerate(VOCAB)}
+i2w = {i: w for i, w in enumerate(VOCAB)}
 
-
-# ============================================================
-# Synthetic SCAN-Lite Dataset
-# ============================================================
-
-commands = [
-    "jump",
-    "walk",
-    "run",
-    "look",
-    "turn"
-]
-
-
-actions = [
-    "JUMP",
-    "WALK",
-    "RUN",
-    "LOOK",
-    "TURN"
-]
+pad_idx = w2i["<pad>"]
+sos_idx = w2i["<sos>"]
+eos_idx = w2i["<eos>"]
 
 
-pairs=[]
+def generate_scan_sample():
+    cmd = random.choice(COMMANDS)
+    act = ACTIONS[COMMANDS.index(cmd)]
+    mod = random.choice(["", "twice", "thrice"])
+
+    inp = [cmd]
+    if mod:
+        inp.append(mod)
+
+    out = []
+    reps = 1
+    if mod == "twice":
+        reps = 2
+    elif mod == "thrice":
+        reps = 3
+    out = [act] * reps
+
+    return inp, out
 
 
-for c,a in zip(commands,actions):
-
-    for rep in range(1,6):
-
-        inp = [c]*rep
-        out = [a]*rep
-
-        pairs.append(
-            (inp,out)
-        )
+raw_train = [generate_scan_sample() for _ in range(2000)]
+raw_test = [generate_scan_sample() for _ in range(500)]
 
 
-random.shuffle(pairs)
+def encode(data, max_len=15):
+    inputs, targets = [], []
+    for inp, out in data:
+        i_tokens = [sos_idx] + [w2i[w] for w in inp] + [eos_idx]
+        o_tokens = [sos_idx] + [w2i[w] for w in out] + [eos_idx]
 
+        i_tokens += [pad_idx] * (max_len - len(i_tokens))
+        o_tokens += [pad_idx] * (max_len - len(o_tokens))
 
-
-# vocabulary
-
-src_vocab = list(set(
-    [x for p in pairs for x in p[0]]
-))
-
-tgt_vocab = list(set(
-    [x for p in pairs for x in p[1]]
-))
-
-
-src2id={
-    w:i for i,w in enumerate(src_vocab)
-}
-
-tgt2id={
-    w:i for i,w in enumerate(tgt_vocab)
-}
-
-
-
-def encode(x,v):
-
-    return [
-        v[w]
-        for w in x
-    ]
-
-
-
-data=[]
-
-for x,y in pairs:
-
-    data.append(
-        (
-            torch.tensor(
-                encode(x,src2id)
-            ),
-            torch.tensor(
-                encode(y,tgt2id)
-            )
-        )
+        inputs.append(i_tokens[:max_len])
+        targets.append(o_tokens[:max_len])
+    return torch.tensor(inputs, dtype=torch.long), torch.tensor(
+        targets, dtype=torch.long
     )
 
 
+train_src, train_tgt = encode(raw_train)
+test_src, test_tgt = encode(raw_test)
 
-split=int(len(data)*0.8)
+train_src, train_tgt = train_src.to(device), train_tgt.to(device)
+test_src, test_tgt = test_src.to(device), test_tgt.to(device)
 
-train=data[:split]
-test=data[split:]
-
-
-
-# ============================================================
-# Models
-# ============================================================
-
-
+# -------------------------------------------------------------
+# 2. Architectures
+# -------------------------------------------------------------
+# (A) Standard Transformer Baseline
 class TransformerBaseline(nn.Module):
-
-    def __init__(self):
-
+    def __init__(self, vocab_size, d_model=128, nhead=4, num_layers=2):
         super().__init__()
+        self.embed = nn.Embedding(vocab_size, d_model, padding_idx=pad_idx)
+        self.pos = nn.Parameter(torch.randn(1, 100, d_model))
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead, dim_feedforward=256, batch_first=True
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.fc_out = nn.Linear(d_model, vocab_size)
 
-        self.emb=nn.Embedding(
-            len(src_vocab),
-            32
+    def forward(self, x):
+        b, seq_len = x.shape
+        h = self.embed(x) + self.pos[:, :seq_len, :]
+        mask = x == pad_idx
+        out = self.encoder(h, src_key_padding_mask=mask)
+        return self.fc_out(out)
+
+
+# (B) DIINA Architecture
+class FastPath(nn.Module):
+    def __init__(self, d_model):
+        super().__init__()
+        self.rnn = nn.GRU(d_model, d_model, batch_first=True)
+
+    def forward(self, x):
+        out, _ = self.rnn(x)
+        return out
+
+
+class SlowPath(nn.Module):
+    def __init__(self, d_model, nhead=4):
+        super().__init__()
+        self.attn = nn.MultiheadAttention(
+            embed_dim=d_model, num_heads=nhead, batch_first=True
         )
 
-        encoder_layer=nn.TransformerEncoderLayer(
-            d_model=32,
-            nhead=4,
-            batch_first=True
-        )
-
-        self.encoder=nn.TransformerEncoder(
-            encoder_layer,
-            2
-        )
-
-        self.out=nn.Linear(
-            32,
-            len(tgt_vocab)
-        )
-
-
-    def forward(self,x):
-
-        x=self.emb(x)
-
-        x=self.encoder(x)
-
-        return self.out(x)
-
-
-
-# ============================================================
-# DIINA
-# ============================================================
+    def forward(self, x, mask=None):
+        out, _ = self.attn(x, x, x, key_padding_mask=mask)
+        return out
 
 
 class DIINA(nn.Module):
-
-    def __init__(self):
-
+    def __init__(self, vocab_size, d_model=128, nhead=4):
         super().__init__()
+        self.embed = nn.Embedding(vocab_size, d_model, padding_idx=pad_idx)
+        self.pos = nn.Parameter(torch.randn(1, 100, d_model))
 
-        self.emb=nn.Embedding(
-            len(src_vocab),
-            32
+        self.fast_path = FastPath(d_model)
+        self.slow_path = SlowPath(d_model, nhead)
+
+        # Dynamic Inhibitory Gate
+        self.gate = nn.Sequential(
+            nn.Linear(d_model, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1),
+            nn.Sigmoid(),
         )
 
-        self.gate=nn.Sequential(
+        self.fc_out = nn.Linear(d_model, vocab_size)
 
-            nn.Linear(32,32),
-            nn.Sigmoid()
+    def forward(self, x):
+        b, seq_len = x.shape
+        h = self.embed(x) + self.pos[:, :seq_len, :]
+        mask = x == pad_idx
 
-        )
+        # Compute dynamic inhibition weights
+        g = self.gate(h)  # Shape: (b, seq_len, 1)
 
+        f_out = self.fast_path(h)
+        s_out = self.slow_path(h, mask=mask)
 
-        self.state=nn.GRU(
-            32,
-            32,
-            batch_first=True
-        )
-
-
-        self.out=nn.Linear(
-            32,
-            len(tgt_vocab)
-        )
+        # Dual-stream routing
+        out = (1.0 - g) * f_out + g * s_out
+        return self.fc_out(out)
 
 
-    def forward(self,x):
+# -------------------------------------------------------------
+# 3. Training & Evaluation Engine
+# -------------------------------------------------------------
+def train_model(model, src, tgt, epochs=15, lr=0.001, batch_size=64):
+    criterion = nn.CrossEntropyLoss(ignore_index=pad_idx)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    n = len(src)
 
-        x=self.emb(x)
+    history = {"loss": [], "time": []}
+    start_time = time.time()
 
-        h,_=self.state(x)
+    model.train()
+    for ep in range(epochs):
+        ep_loss = 0.0
+        perm = torch.randperm(n)
+        for i in range(0, n, batch_size):
+            idx = perm[i : i + batch_size]
+            b_src = src[idx]
+            b_tgt = tgt[idx]
 
-        inhibition=self.gate(h)
-
-        h=h*(1-inhibition)
-
-        return self.out(h)
-
-
-
-# ============================================================
-# Training
-# ============================================================
-
-
-def train_model(model,name):
-
-    model.to(device)
-
-    opt=optim.Adam(
-        model.parameters(),
-        lr=0.003
-    )
-
-
-    loss_fn=nn.CrossEntropyLoss()
-
-
-    start=time.time()
-
-
-    for epoch in range(80):
-
-        total=0
-
-
-        random.shuffle(train)
-
-
-        for x,y in train:
-
-            x=x.unsqueeze(0).to(device)
-            y=y.to(device)
-
-
-            pred=model(x)
-
-
-            loss=loss_fn(
-                pred.squeeze(0),
-                y
-            )
-
-
-            opt.zero_grad()
-
+            optimizer.zero_grad()
+            out = model(b_src)
+            loss = criterion(out.view(-1, len(VOCAB)), b_tgt.view(-1))
             loss.backward()
+            optimizer.step()
 
-            opt.step()
+            ep_loss += loss.item()
 
+        avg_loss = ep_loss / (n // batch_size)
+        history["loss"].append(avg_loss)
+        history["time"].append(time.time() - start_time)
+        print(f"Epoch {ep+1:02d}/{epochs:02d} | Loss: {avg_loss:.4f}")
 
-            total+=loss.item()
-
-
-
-        if epoch%20==0:
-
-            print(
-                name,
-                "epoch",
-                epoch,
-                "loss",
-                round(total,3)
-            )
+    return history
 
 
-    return time.time()-start
-
-
-
-
-# ============================================================
-# Evaluation
-# ============================================================
-
-
-def evaluate(model,name):
-
+def evaluate(model, src, tgt):
     model.eval()
-
-    correct=0
-    total=0
-
-
     with torch.no_grad():
+        out = model(src)
+        preds = torch.argmax(out, dim=-1)
 
-        for x,y in test:
-
-
-            x=x.unsqueeze(0).to(device)
-
-
-            pred=model(x)
-
-
-            pred=torch.argmax(
-                pred,
-                dim=-1
-            ).cpu().squeeze()
-
-
-            if torch.equal(
-                pred,
-                y
-            ):
-
-                correct+=1
-
-
-            total+=1
-
-
-    acc=correct/total
-
-
-    print(
-        name,
-        "Accuracy:",
-        round(acc,4)
-    )
-
-
+        mask = tgt != pad_idx
+        correct = (preds == tgt) & mask
+        acc = correct.sum().item() / mask.sum().item()
     return acc
 
 
+# -------------------------------------------------------------
+# 4. Run Benchmark & Comparison
+# -------------------------------------------------------------
+print("\n" + "=" * 50)
+print("--- Training Transformer Baseline ---")
+tf_model = TransformerBaseline(vocab_size=len(VOCAB)).to(device)
+t0 = time.time()
+tf_hist = train_model(tf_model, train_src, train_tgt, epochs=15)
+tf_time = time.time() - t0
+tf_acc = evaluate(tf_model, test_src, test_tgt)
 
+print("\n" + "=" * 50)
+print("--- Training DIINA Architecture ---")
+diina_model = DIINA(vocab_size=len(VOCAB)).to(device)
+t0 = time.time()
+diina_hist = train_model(diina_model, train_src, train_tgt, epochs=15)
+diina_time = time.time() - t0
+diina_acc = evaluate(diina_model, test_src, test_tgt)
 
-# ============================================================
-# Run
-# ============================================================
-
-
-models={
-
-"Transformer":
-TransformerBaseline(),
-
-"DIINA":
-DIINA()
-
-}
-
-
-
-results=[]
-
-
-for name,model in models.items():
-
-    print("\nTraining",name)
-
-    t=train_model(
-        model,
-        name
-    )
-
-    acc=evaluate(
-        model,
-        name
-    )
-
-
-    results.append({
-
-        "Model":name,
-        "Accuracy":acc,
-        "Training_Time":t
-
-    })
-
-
-
-# ============================================================
-# Save
-# ============================================================
-
-
-df=pd.DataFrame(results)
-
-
-print("\n========== FINAL RESULTS ==========")
-
-print(df)
-
-
-
-df.to_csv(
-"DIINA_v17_REAL_RESULTS.csv",
-index=False
+# -------------------------------------------------------------
+# 5. Output Summary & Artifact Generation
+# -------------------------------------------------------------
+res_df = pd.DataFrame(
+    {
+        "Model": ["Transformer", "DIINA"],
+        "Test Accuracy": [f"{tf_acc*100:.2f}%", f"{diina_acc*100:.2f}%"],
+        "Training Time (s)": [f"{tf_time:.2f}", f"{diina_time:.2f}"],
+        "Final Loss": [f"{tf_hist['loss'][-1]:.4f}", f"{diina_hist['loss'][-1]:.4f}"],
+    }
 )
 
+print("\n" + "=" * 50)
+print("BENCHMARK SUMMARY:")
+print(res_df.to_string(index=False))
+res_df.to_csv("DIINA_v17_REAL_RESULTS.csv", index=False)
+print("\n[+] Saved results to DIINA_v17_REAL_RESULTS.csv")
 
-
-plt.figure(figsize=(6,4))
-
-
-plt.bar(
-df.Model,
-df.Accuracy
-)
-
-
-plt.ylabel(
-"Accuracy"
-)
-
-plt.title(
-"DIINA v17 Real Benchmark"
-)
-
-
-plt.ylim(
-0,
-1
-)
-
-
-plt.savefig(
-"DIINA_v17_Result.png",
-dpi=300
-)
-
-
-print(
-"""
-============================
-
-FILES:
-
-DIINA_v17_REAL_RESULTS.csv
-
-DIINA_v17_Result.png
-
-============================
-"""
-)
+# Plot Convergence Comparison
+plt.figure(figsize=(8, 5))
+plt.plot(tf_hist["loss"], label="Transformer", marker="o", color="#d9534f")
+plt.plot(diina_hist["loss"], label="DIINA", marker="s", color="#0275d8")
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.title("Convergence Comparison: Transformer vs. DIINA")
+plt.legend()
+plt.grid(True, linestyle="--", alpha=0.6)
+plt.savefig("DIINA_v17_Result.png", dpi=300, bbox_inches="tight")
+plt.close()
+print("[+] Saved convergence plot to DIINA_v17_Result.png")
