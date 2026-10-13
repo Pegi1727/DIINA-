@@ -1,0 +1,4 @@
+scenario,latency_ms,mean_gate_activation,confidence_proxy,fast_path_utilization,slow_path_utilization,mean_instantaneous_variance,variance_knee,frames,feature_dim,seed,gate_method
+Tonal (Yoruba/Chinese),5.192080000000487,0.4135000705718994,0.8934480547904968,0.5864999294281006,0.4135000705718994,0.03303107991814613,0.06864048109779358,100,64,2025,hand-calibrated statistical variance prior; not trained
+Non-tonal fast (English/Spanish),0.20358199999748194,0.33965685963630676,0.7988548278808594,0.6603431403636932,0.33965685963630676,0.5830130577087402,0.06864048109779358,100,64,2025,hand-calibrated statistical variance prior; not trained
+Extreme ambient noise (std=15),0.29601800000023104,3.553092941532217e-23,0.5,1.0,3.553092941532217e-23,226.50865173339844,0.06864048109779358,100,64,2025,hand-calibrated statistical variance prior; not trained
